@@ -50,6 +50,7 @@ DDPfoCreator::~DDPfoCreator()
 
 pandora::StatusCode DDPfoCreator::CreateParticleFlowObjects(EVENT::LCEvent *pLCEvent)
 {
+  std::cout<<"************************PFO CREATOR**********************"<<std::endl;
     const pandora::PfoList *pPandoraPfoList = NULL;
     PANDORA_RETURN_RESULT_IF(pandora::STATUS_CODE_SUCCESS, !=, PandoraApi::GetCurrentPfoList(m_pandora, pPandoraPfoList));
 
@@ -65,17 +66,24 @@ pandora::StatusCode DDPfoCreator::CreateParticleFlowObjects(EVENT::LCEvent *pLCE
     this->InitialiseSubDetectorNames(subDetectorNames);
     pClusterCollection->parameters().setValues("ClusterSubdetectorNames", subDetectorNames);
 
+    std::cout<<" Particle creator for N PFO= "<<pPandoraPfoList->size()<<std::endl;
     // Create lcio "reconstructed particles" from the pandora "particle flow objects"
+   
     for (pandora::PfoList::const_iterator pIter = pPandoraPfoList->begin(), pIterEnd = pPandoraPfoList->end(); pIter != pIterEnd; ++pIter)
     {
+
         const pandora::ParticleFlowObject *const pPandoraPfo(*pIter);
         IMPL::ReconstructedParticleImpl *const pReconstructedParticle(new ReconstructedParticleImpl());
 
+	std::cout<<"pfo energy="<<pPandoraPfo->GetEnergy()<<std::endl;
         const bool hasTrack(!pPandoraPfo->GetTrackList().empty());
         const pandora::ClusterList &clusterList(pPandoraPfo->GetClusterList());
+	std::cout<<" hasTrack: "<< hasTrack<<std::endl;
 
         float clustersTotalEnergy(0.f);
         pandora::CartesianVector referencePoint(0.f, 0.f, 0.f), clustersWeightedPosition(0.f, 0.f, 0.f);
+	std::cout<<"--------Loop on cluster list size="<<clusterList.size()<<std::endl;
+
         for (pandora::ClusterList::const_iterator cIter = clusterList.begin(), cIterEnd = clusterList.end(); cIter != cIterEnd; ++cIter)
         {
             const pandora::Cluster *const pPandoraCluster(*cIter);
@@ -83,17 +91,31 @@ pandora::StatusCode DDPfoCreator::CreateParticleFlowObjects(EVENT::LCEvent *pLCE
             pPandoraCluster->GetOrderedCaloHitList().FillCaloHitList(pandoraCaloHitList);
             pandoraCaloHitList.insert(pandoraCaloHitList.end(), pPandoraCluster->GetIsolatedCaloHitList().begin(), pPandoraCluster->GetIsolatedCaloHitList().end());
 
+	    std::cout<<" call SetClusterSubDetectorEnergies"<<std::endl;
             pandora::FloatVector hitE, hitX, hitY, hitZ;
             IMPL::ClusterImpl *const pLcioCluster(new ClusterImpl());
             this->SetClusterSubDetectorEnergies(subDetectorNames, pLcioCluster, pandoraCaloHitList, hitE, hitX, hitY, hitZ);
 
+	    std::cout<<" call SetClusterEnergyAndError"<<std::endl;
             float clusterCorrectEnergy(0.f);
-            this->SetClusterEnergyAndError(pPandoraPfo, pPandoraCluster, pLcioCluster, clusterCorrectEnergy);
+	    if(m_settings._digitalCalo==1)
+	      {
+		std::cout<<" is digital calo"<<std::endl;
+		this->SetDigiCalClusterEnergyAndError(pPandoraPfo, pPandoraCluster, pLcioCluster, clusterCorrectEnergy, pandoraCaloHitList);
+	      }
+	     if(m_settings._digitalCalo==0)
+              {
+		std::cout<<" is analogic calo"<<std::endl;
+		this->SetClusterEnergyAndError(pPandoraPfo, pPandoraCluster, pLcioCluster, clusterCorrectEnergy);
+              }
+            //this->SetClusterEnergyAndError(pPandoraPfo, pPandoraCluster, pLcioCluster, clusterCorrectEnergy, pandoraCaloHitList);
+	     std::cout<<" cluster energy after="<<clusterCorrectEnergy<<" pLcioCluster ene="<<pLcioCluster->getEnergy()<<std::endl;
 
             pandora::CartesianVector clusterPosition(0.f, 0.f, 0.f);
             const unsigned int nHitsInCluster(pandoraCaloHitList.size());
+	    std::cout<<"before: position x="<<clusterPosition.GetX()<<" y="<<clusterPosition.GetY()<<" z="<<clusterPosition.GetZ()<<std::endl;
             this->SetClusterPositionAndError(nHitsInCluster, hitE, hitX, hitY, hitZ, pLcioCluster, clusterPosition);
-
+	    std::cout<<"after: position x="<<clusterPosition.GetX()<<" y="<<clusterPosition.GetY()<<" z="<<clusterPosition.GetZ()<<std::endl;
             if (!hasTrack)
             {
                 clustersWeightedPosition += clusterPosition * clusterCorrectEnergy;
@@ -102,9 +124,11 @@ pandora::StatusCode DDPfoCreator::CreateParticleFlowObjects(EVENT::LCEvent *pLCE
 
             pClusterCollection->addElement(pLcioCluster);
             pReconstructedParticle->addCluster(pLcioCluster);
+	    std::cout<<" cluster energy ="<<clusterCorrectEnergy<<" pLcioCluster ene="<<pLcioCluster->getEnergy()<<std::endl;
         }
+	std::cout<<" ---endl loop on clusters"<<std::endl;
 
-        if (!hasTrack)
+	if (!hasTrack)
         {
             if (clustersTotalEnergy < std::numeric_limits<float>::epsilon())
             {
@@ -125,12 +149,14 @@ pandora::StatusCode DDPfoCreator::CreateParticleFlowObjects(EVENT::LCEvent *pLCE
         this->AddTracksToRecoParticle(pPandoraPfo, pReconstructedParticle);
         this->SetRecoParticlePropertiesFromPFO(pPandoraPfo, pReconstructedParticle);
         pReconstructedParticleCollection->addElement(pReconstructedParticle);
+	std::cout<<" particle energy="<<pReconstructedParticle->getEnergy()<<std::endl;
 
         IMPL::VertexImpl *const pStartVertex(new VertexImpl());
         pStartVertex->setAlgorithmType(m_settings.m_startVertexAlgName.c_str());
         pStartVertex->setPosition(referencePoint.GetX(),referencePoint.GetY(),referencePoint.GetZ());
         pStartVertex->setAssociatedParticle(pReconstructedParticle);
         pStartVertexCollection->addElement(pStartVertex);
+       
     }
 
     pLCEvent->addCollection(pClusterCollection, m_settings.m_clusterCollectionName.c_str());
@@ -181,15 +207,18 @@ void DDPfoCreator::SetClusterSubDetectorEnergies(const pandora::StringVector &su
             case CHT::lcal:  subDetectorEnergies[LCAL_INDEX ] += caloHitEnergy; break;
             case CHT::lhcal: subDetectorEnergies[LHCAL_INDEX] += caloHitEnergy; break;
             case CHT::bcal:  subDetectorEnergies[BCAL_INDEX ] += caloHitEnergy; break;
-            default: streamlog_out(WARNING) << "DDPfoCreator::SetClusterSubDetectorEnergies: no subdetector found for hit with type: " << pCalorimeterHit->getType() << std::endl;
+	default: streamlog_out(WARNING) << "DDPfoCreator::SetClusterSubDetectorEnergies: no subdetector found for hit with type: " << pCalorimeterHit->getType() << std::endl;
+
         }
+	//std::cout<<"Cluster sub det energy="<<caloHitEnergy<<std::endl;
     }
 }
 
 //------------------------------------------------------------------------------------------------------------------------------------------
 
+
 void DDPfoCreator::SetClusterEnergyAndError(const pandora::ParticleFlowObject *const pPandoraPfo, const pandora::Cluster *const pPandoraCluster, 
-    IMPL::ClusterImpl *const pLcioCluster, float &clusterCorrectEnergy) const
+					    IMPL::ClusterImpl *const pLcioCluster, float &clusterCorrectEnergy) const
 {
     const bool isEmShower((pandora::PHOTON == pPandoraPfo->GetParticleId()) || (pandora::E_MINUS == std::abs(pPandoraPfo->GetParticleId())));
     clusterCorrectEnergy = (isEmShower ? pPandoraCluster->GetCorrectedElectromagneticEnergy(m_pandora) : pPandoraCluster->GetCorrectedHadronicEnergy(m_pandora));
@@ -203,7 +232,64 @@ void DDPfoCreator::SetClusterEnergyAndError(const pandora::ParticleFlowObject *c
 
     pLcioCluster->setEnergy(clusterCorrectEnergy);
     pLcioCluster->setEnergyError(energyError);
+    std::cout<<" clusterCorrectEnergy="<<clusterCorrectEnergy<<std::endl;
 }
+
+/*
+void DDPfoCreator::SetClusterEnergyAndError(const pandora::ParticleFlowObject *const pPandoraPfo, const pandora::Cluster *const pPandoraCluster,
+                                            IMPL::ClusterImpl *const pLcioCluster, float &clusterCorrectEnergy, const pandora::CaloHitList &pandoraCaloHitList) const
+{
+    const bool isEmShower((pandora::PHOTON == pPandoraPfo->GetParticleId()) || (pandora::E_MINUS == std::abs(pPandoraPfo->GetParticleId())));
+    //    clusterCorrectEnergy = (isEmShower ? pPandoraCluster->GetCorrectedElectromagneticEnergy(m_pandora) : pPandoraCluster->GetCorrectedHadronicEnergy(m_pandora));
+    std::cout<<"isEMShower="<<isEmShower<<std::endl;
+    std::cout<<" pandora calo Hit list="<<pandoraCaloHitList.size()<<std::endl;
+    float a=27.46;
+    float b=1/0.8843;
+    float c=-10.81/a;
+    clusterCorrectEnergy=std::pow((pandoraCaloHitList.size()/a),b) ;   
+    if (clusterCorrectEnergy < std::numeric_limits<float>::epsilon())
+        throw pandora::StatusCodeException(pandora::STATUS_CODE_FAILURE);
+
+    const float stochasticTerm(isEmShower ? m_settings.m_emStochasticTerm : m_settings.m_hadStochasticTerm);
+    const float constantTerm(isEmShower ? m_settings.m_emConstantTerm : m_settings.m_hadConstantTerm);
+    const float energyError(std::sqrt(stochasticTerm * stochasticTerm / clusterCorrectEnergy + constantTerm * constantTerm) * clusterCorrectEnergy);
+
+    pLcioCluster->setEnergy(clusterCorrectEnergy);
+    pLcioCluster->setEnergyError(energyError);
+ 
+    //    std::cout<<" clusterCorrectEnergy="<<clusterCorrectEnergy<<" my digi calo energy="<<myClEn<<std::endl;
+    std::cout<<" clusterCorrectEnergy="<<clusterCorrectEnergy<<std::endl;
+    
+}
+*/
+
+void DDPfoCreator::SetDigiCalClusterEnergyAndError(const pandora::ParticleFlowObject *const pPandoraPfo, const pandora::Cluster *const pPandoraCluster,
+                                            IMPL::ClusterImpl *const pLcioCluster, float &clusterCorrectEnergy, const pandora::CaloHitList &pandoraCaloHitList) const
+{
+    const bool isEmShower((pandora::PHOTON == pPandoraPfo->GetParticleId()) || (pandora::E_MINUS == std::abs(pPandoraPfo->GetParticleId())));
+    //    clusterCorrectEnergy = (isEmShower ? pPandoraCluster->GetCorrectedElectromagneticEnergy(m_pandora) : pPandoraCluster->GetCorrectedHadronicEnergy(m_pandora));     
+    //std::cout<<"isEMShower="<<isEmShower<<std::endl;
+    std::cout<<" pandora calo Hit list size="<<pandoraCaloHitList.size()<<std::endl;
+    float a=27.46;
+    float b=1/0.8843;
+    float c=-10.81/a;
+    clusterCorrectEnergy=std::pow((pandoraCaloHitList.size()/a),b) ;
+    if (clusterCorrectEnergy < std::numeric_limits<float>::epsilon())
+        throw pandora::StatusCodeException(pandora::STATUS_CODE_FAILURE);
+
+    const float stochasticTerm(isEmShower ? m_settings.m_emStochasticTerm : m_settings.m_hadStochasticTerm);
+    const float constantTerm(isEmShower ? m_settings.m_emConstantTerm : m_settings.m_hadConstantTerm);
+    const float energyError(std::sqrt(stochasticTerm * stochasticTerm / clusterCorrectEnergy + constantTerm * constantTerm) * clusterCorrectEnergy);
+
+    pLcioCluster->setEnergy(clusterCorrectEnergy);
+    pLcioCluster->setEnergyError(energyError);
+
+    //    std::cout<<" clusterCorrectEnergy="<<clusterCorrectEnergy<<" my digi calo energy="<<myClEn<<std::endl;                                                            
+    std::cout<<" clusterCorrectEnergy="<<clusterCorrectEnergy<<std::endl;
+
+}
+
+
 
 //------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -413,6 +499,9 @@ void DDPfoCreator::SetRecoParticlePropertiesFromPFO(const pandora::ParticleFlowO
     pReconstructedParticle->setMass(pPandoraPfo->GetMass());
     pReconstructedParticle->setCharge(pPandoraPfo->GetCharge());
     pReconstructedParticle->setType(pPandoraPfo->GetParticleId());
+    std::cout<<" energy from set reco part prop="<<pPandoraPfo->GetEnergy()<<std::endl;
+    std::cout<<" px="<<pPandoraPfo->GetMomentum().GetX()<<" py="<<pPandoraPfo->GetMomentum().GetY()<<" pz="<<pPandoraPfo->GetMomentum().GetZ()<<std::endl;
+    std::cout<<" pt="<<std::pow((pPandoraPfo->GetMomentum().GetX()*pPandoraPfo->GetMomentum().GetX() + pPandoraPfo->GetMomentum().GetY()*pPandoraPfo->GetMomentum().GetY()),0.5);
 }
 
 //------------------------------------------------------------------------------------------------------------------------------------------
@@ -425,6 +514,7 @@ DDPfoCreator::Settings::Settings():
     m_emStochasticTerm(0.17f),
     m_hadStochasticTerm(0.6f),
     m_emConstantTerm(0.01f),
-    m_hadConstantTerm(0.03f)
+    m_hadConstantTerm(0.03f),
+    _digitalCalo(1)
 {
 }

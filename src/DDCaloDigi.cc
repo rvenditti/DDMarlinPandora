@@ -984,7 +984,7 @@ void DDCaloDigi::processEvent( LCEvent * evt ) {
   //
   // * Reading HCAL Collections of Simulated Hits *
   //
-
+  cout<<"hcal sim hits collection size="<<_hcalCollections.size()<<endl;
   for (unsigned int i(0); i < _hcalCollections.size(); ++i) {
 
     std::string colName =  _hcalCollections[i] ;
@@ -1006,10 +1006,12 @@ void DDCaloDigi::processEvent( LCEvent * evt ) {
       CellIDDecoder<SimCalorimeterHit> idDecoder(col);
       LCCollectionVec *hcalcol = new LCCollectionVec(LCIO::CALORIMETERHIT);
       hcalcol->setFlag(_flag.getFlag());
+      cout<<"number of elements="<<numElements<<endl;
       for (int j(0); j < numElements; ++j) { //loop over all SimCalorimeterHits in this collection
+
         SimCalorimeterHit * hit = dynamic_cast<SimCalorimeterHit*>( col->getElementAt( j ) ) ;
         float energy = hit->getEnergy();
-
+	cout<<j<<" original sim hit energy="<<energy<<endl;
         if (energy > _thresholdHcal[0]/2) { //preselect for SimHits with energySum>threshold. Doubtful at least, as lower energy hit might fluctuate up and still be counted
           int cellid = hit->getCellID0();
           int cellid1 = hit->getCellID1();
@@ -1019,8 +1021,10 @@ void DDCaloDigi::processEvent( LCEvent * evt ) {
           // with depth - would need a simple mod to make response proportional to layer thickness
           if(_digitalHcal){
             calibr_coeff = this->digitalHcalCalibCoeff(caloLayout,energy);
+	    cout<<j<<" digital calib coeff="<<calibr_coeff<<endl;
           }else{
             calibr_coeff = this->analogueHcalCalibCoeff(caloLayout,layer);
+	    cout<<j<<" analogue calib coeff="<<calibr_coeff<<endl;
           }
           // if(fabs(hit->getPosition()[2])>=_zOfEcalEndcap)calibr_coeff*=_hcalEndcapCorrectionFactor;
 	  if (caloLayout!=CHT::barrel) calibr_coeff*=_hcalEndcapCorrectionFactor; // more robust, is applied to ALL hits outside of barrel.
@@ -1042,7 +1046,7 @@ void DDCaloDigi::processEvent( LCEvent * evt ) {
             float r = sqrt(x*x+y*y+z*z);//this is a crude approximation. assumes initial particle originated at the very center of the detector.
             float dt = r/300-0.1;//magic numbers! ~
             const unsigned int n = hit->getNMCContributions(); //number of subhits of this SimHit
-
+	    cout<<j<<" number of subHits="<<n<<endl;
             std::vector<bool> used(n, false) ;
 
             int count = 0;
@@ -1125,6 +1129,7 @@ void DDCaloDigi::processEvent( LCEvent * evt ) {
                     calhit->setCellID1(cellid1);
                     if(_digitalHcal){
                       calhit->setEnergy(calibr_coeff);
+		      cout<<" digital hcal energy="<<calibr_coeff<<endl;
                       //eCellOutput+= calibr_coeff;
                     }else{
                       calhit->setEnergy(calibr_coeff*energyi);
@@ -1159,6 +1164,7 @@ void DDCaloDigi::processEvent( LCEvent * evt ) {
 
             if(_digitalHcal){
               calhit->setEnergy(calibr_coeff);
+	      cout<<j<<" final digiHcal energy="<<calibr_coeff<<endl;
             }else{
               calhit->setEnergy(calibr_coeff*energyi);
             }
@@ -1574,7 +1580,17 @@ float DDCaloDigi::ahcalEnergyDigi(float energy, int id0, int id1) {
   // small update for time-constant uncorrelated miscalibrations. DJ, Jan 2015
 
   float e_out(energy);
-  if ( _applyHcalDigi==1 ) e_out = scintillatorDigi(energy, false);  // scintillator digi
+
+  //if ( _applyHcalDigi==1 ) e_out = scintillatorDigi(energy, false);  // scintillator digi
+  float hcal_elec_smearing = _thresholdHcal[0]*0.1; //10% of the threshold energy 
+  if ( _applyHcalDigi==1 ){
+    float neionpairs=1e9*energy/26; //energy to creat an e-ion pair in Argon is 26 eV; energy is in GeV
+     cout<<" energy="<<e_out<<endl;
+    e_out = energy*CLHEP::RandPoisson::shoot( neionpairs )/neionpairs;
+    cout<<" energy weighted for e-ion pair creation="<<e_out<<endl;
+    e_out += CLHEP::RandGauss::shoot( 0, hcal_elec_smearing );  // apply a gaussian smearing to take into account the electronic noise
+    cout<<" energy after gauss smearing="<<e_out<<endl;
+	}	
 
   // add electronics dynamic range
   // Sept 2015: Daniel moved this to the ScintillatorDigi part, so it is applied before unfolding of sipm response
